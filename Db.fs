@@ -19,9 +19,18 @@ type DbContext = Sql.dataContext
 type Album = DbContext.``public.albumsEntity``
 type Genre = DbContext.``public.genresEntity``
 type AlbumDetails = DbContext.``public.albumdetailsEntity``
+type Artist = DbContext.``public.artistsEntity``
+type User = DbContext.``public.usersEntity``
 
 let getGenres (ctx : DbContext) : Genre list =
   ctx.Public.Genres |> Seq.toList
+
+let getAlbum id (ctx : DbContext) : Album option =
+  query {
+    for album in ctx.Public.Albums do
+      where (album.Albumid = id)
+      select album
+  } |> Seq.tryHead
 
 let getAlbumsForGenre genreName (ctx : DbContext) : Album list =
   query {
@@ -32,6 +41,21 @@ let getAlbumsForGenre genreName (ctx : DbContext) : Album list =
   }
   |> Seq.toList
 
+let createAlbum (artistId, genreId, price, title) (ctx : DbContext) =
+  ctx.Public.Albums.Create(artistId, genreId, price, title) |> ignore
+  ctx.SubmitUpdates()
+
+let updateAlbum (album : Album) (artistId, genreId, price, title) (ctx : DbContext) =
+  album.Artistid <- artistId
+  album.Genreid <- genreId
+  album.Price <- price
+  album.Title <- title
+  ctx.SubmitUpdates()
+
+let deleteAlbum (album : Album) (ctx : DbContext) =
+  album.Delete()
+  ctx.SubmitUpdates()
+
 let getAlbumDetails id (ctx : DbContext) : AlbumDetails option =
   query {
     for album in ctx.Public.Albumdetails do
@@ -40,4 +64,19 @@ let getAlbumDetails id (ctx : DbContext) : AlbumDetails option =
   }
   |> Seq.tryHead
 
+let getAlbumsDetails (ctx : DbContext) : AlbumDetails list =
+  ctx.Public.Albumdetails
+  |> Seq.toList
+  |> List.sortBy (fun a -> a.Artist)
+
+let getArtists (ctx : DbContext) : Artist list =
+  ctx.Public.Artists |> Seq.toList
+
 let getContext() = Sql.GetDataContext()
+
+let validateUser (username, password) (ctx : DbContext) : User option =
+  query {
+    for user in ctx.Public.Users do
+      where (user.Username = username && user.Password = password)
+      select user
+  } |> Seq.tryHead
