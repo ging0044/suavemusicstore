@@ -21,6 +21,8 @@ type Genre = DbContext.``public.genresEntity``
 type AlbumDetails = DbContext.``public.albumdetailsEntity``
 type Artist = DbContext.``public.artistsEntity``
 type User = DbContext.``public.usersEntity``
+type CartDetails = DbContext.``public.cartdetailsEntity``
+type Cart = DbContext.``public.cartsEntity``
 
 let getGenres (ctx : DbContext) : Genre list =
   ctx.Public.Genres |> Seq.toList
@@ -71,6 +73,52 @@ let getAlbumsDetails (ctx : DbContext) : AlbumDetails list =
 
 let getArtists (ctx : DbContext) : Artist list =
   ctx.Public.Artists |> Seq.toList
+
+let getCart cartId albumId (ctx : DbContext) : Cart option =
+  query {
+    for cart in ctx.Public.Carts do
+      where (cart.Cartid = cartId && cart.Albumid = albumId)
+      select cart
+  } |> Seq.tryHead
+
+let getCarts cartId (ctx : DbContext) : Cart list =
+  query {
+    for cart in ctx.Public.Carts do
+      where (cart.Cartid = cartId)
+      select cart
+  } |> Seq.toList
+
+let upgradeCarts (cartId : string, username : string) (ctx : DbContext) =
+  for cart in getCarts cartId ctx do
+    match getCart username cart.Albumid ctx with
+    | Some existing ->
+      existing.Count <- existing.Count + cart.Count
+      cart.Delete()
+    | None ->
+      cart.Cartid <- username
+  ctx.SubmitUpdates()
+
+let addToCart cartId albumId (ctx : DbContext) =
+  match getCart cartId albumId ctx with
+  | Some cart ->
+    cart.Count <- cart.Count + 1
+  | None ->
+    ctx.Public.Carts.Create(albumId, cartId, 1, System.DateTime.UtcNow)
+    |> ignore
+  ctx.SubmitUpdates()
+
+let removeFromCart (cart : Cart) albumId (ctx : DbContext) =
+  cart.Count <- cart.Count - 1
+  if cart.Count = 0 then
+    cart.Delete()
+  ctx.SubmitUpdates()
+
+let getCartsDetails cartId (ctx : DbContext) : CartDetails list =
+  query {
+    for cart in ctx.Public.Cartdetails do
+      where (cart.Cartid = cartId)
+      select cart
+  } |> Seq.toList
 
 let getContext() = Sql.GetDataContext()
 

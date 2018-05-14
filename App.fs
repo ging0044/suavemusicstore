@@ -21,6 +21,7 @@ type UserLoggedOnSession = {
 
 type Session =
   | NoSession
+  | CartIdOnly of string
   | UserLoggedOn of UserLoggedOnSession
 
 let bindToForm form handler =
@@ -39,8 +40,10 @@ let session f =
     match x |> HttpContext.state with
     | None -> f NoSession
     | Some state ->
-      match state.get "username", state.get "role" with
-      |Some username, Some role ->
+      match state.get "cartid", state.get "username", state.get "role" with
+      | Some cartId, None, None ->
+        f (CartIdOnly cartId)
+      | _, Some username, Some role ->
         f (UserLoggedOn {Username = username; Role = role})
       | _ -> f NoSession)
 
@@ -50,13 +53,20 @@ let sessionStore setF = context (fun x ->
   | None -> never)
 
 let html container =
-  let result user =
-    OK (View.index (View.partUser user) container)
+  let ctx = Db.getContext()
+  let result cartItems user =
+    OK (View.index (View.partNav cartItems) (View.partUser user) container)
     >=> Writers.setMimeType "text/html; charset=utf-8"
 
   session (function
-  | UserLoggedOn { Username = username } -> result (Some username)
-  | _ -> result None)
+  | UserLoggedOn { Username = username } ->
+    let items = Db.getCartsDetails username ctx |> List.sumBy (fun c -> c.Count)
+    result items (Some username)
+  | CartIdOnly cartId ->
+    let items = Db.getCartsDetails cartId ctx |> List.sumBy (fun c -> c.Count)
+    result items None
+  | _ ->
+    result 0 None)
 
 let returnPathOrHome =
   request (fun x ->
@@ -165,7 +175,12 @@ let logon =
       match Db.validateUser (form.Username, passHash password) ctx with
       | Some user ->
         authenticated Cookie.CookieLife.Session false
-        >=> session (fun _ -> succeed)
+        >=> session (function
+          | CartIdOnly cartId ->
+            let ctx = Db.getContext()
+            Db.upgradeCarts (cartId, user.Username) ctx
+            sessionStore (fun store -> store.set "cartid" "")
+          | _ -> succeed)
         >=> sessionStore (fun store ->
             store.set "username" user.Username
             >=> store.set "role" user.Role)
@@ -199,12 +214,56 @@ let admin f_success =
     | _ -> UNAUTHORIZED "Not logged in"
   ))
 
+let cart =
+  session (function
+  | NoSession ->
+    View.emptyCart |> html
+  | UserLoggedOn { Username = cartId }
+  | CartIdOnly cartId ->
+    let ctx = Db.getContext()
+    Db.getCartDetails cartId ctx |> View.cart |> html)
+
+let addToCart albumId =
+  let ctx = Db.getContext()
+  session (function
+    | NoSession ->
+      let cartId = Guid.NewGuid().ToString("N")
+      Db.addToCart cartId albumId ctx
+      sessionStore (fun store ->
+        store.set "cartid" cartId)
+    | UserLoggedOn { Username = cartId }
+    | CartIdOnly cartId ->
+      Db.addToCart cartId albumId ctx
+      succeed)
+    >=> Redirection.FOUND Path.cart.overview
+
+let removeFromCart albumId =
+  session (function
+  | NoSession -> never
+  | UserLoggedIn { Username = username }
+  | CartIdOnly cartId ->
+    let ctx = Db.getContext()
+    match Db.getCart cartId albumId ctx with
+    | Some cart ->
+      Db.removeFromCart cart albumId ctx
+      Db.getCartsDetails cartId ctx
+      |> View.cart
+      |> List.map Html.htmlToString
+      |> String.concat ""
+      |> OK
+    | None ->
+      never)
+
 let webPart =
   choose [
     path Path.home >=> html View.home
     path Path.Store.overview >=> overview
     path Path.Store.browse >=> browse
     pathScan Path.Store.details details
+
+    path Path.Cart.overview >=> cart
+    pathScan Path.Cart.addAlbum addToCart
+    pathScan Path.Cart.removeAlbum removeFromCart
 
     path Path.Admin.manage >=> admin manage
     path Path.Admin.createAlbum >=> admin createAlbum
@@ -214,7 +273,7 @@ let webPart =
     path Path.Account.logon >=> logon
     path Path.Account.logoff >=> reset
 
-    pathRegex "(.*)\.(css|png|gif)" >=> Files.browseHome
+    pathRegex "(.*)\.(css|png|gif|js)" >=> Files.browseHome
     html View.notFound
   ]
 

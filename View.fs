@@ -66,10 +66,11 @@ let truncate k (s : string) =
 
 let ulAttr attr nodes = tag "ul" attr nodes
 
-let partNav =
+let partNav cartItems =
   ulAttr ["id", "navlist"] [
     li [a Path.home [] [Text "Home"]]
     li [a Path.Store.overview [] [Text "Store"]]
+    li [a Path.Cart.overview [] [Text (sprintf "Cart (%d)" cartItems)]]
     li [a Path.Admin.manage [] [Text "Admin"]]
   ]
 
@@ -83,7 +84,7 @@ let partUser (user : string option) =
       yield a Path.Account.logon [] [Text "Log on"]
   ]
 
-let index partUser container =
+let index partNav partUser container =
   html [] [
     head [] [
       title [] "Suave Music Store"
@@ -125,7 +126,7 @@ let manage (albums : Db.AlbumDetails list) = [
     yield tr [
       for t in ["Artist";"Title";"Genre";"Price";"Action"] -> th [Text t]
     ]
-    
+
     for album in albums ->
     tr [
       for t in [truncate 25 album.Artist
@@ -133,7 +134,7 @@ let manage (albums : Db.AlbumDetails list) = [
                 album.Genre
                 album.Price.ToString("0.##") ] ->
         td [Text t]
-      
+
       yield td [
         a (sprintf Path.Admin.editAlbum album.Albumid) [] [Text "Edit"]
         Text " | "
@@ -170,7 +171,7 @@ let createAlbum genres artists = [
     { Form = Form.album
       Fieldsets =
         [ { Legend = "Album"
-            Fields = 
+            Fields =
               [ { Label = "Genre"
                   Html = selectInput (fun f -> <@ f.GenreId @>) genres None }
                 { Label = "Artist"
@@ -185,7 +186,7 @@ let createAlbum genres artists = [
                             ["value", "/placeholder.gif"] } ] } ]
 
       SubmitText = "Create" }
-  
+
   div [] [
     a Path.Admin.manage [] [Text "Back to list"]
   ]
@@ -222,7 +223,7 @@ let editAlbum (album : Db.Album) genres artists = [
                             (fun f -> <@ f.ArtUrl @>)
                             ["value", "/placeholder.gif"] } ] } ]
       SubmitText = "Save Changes" }
-    
+
   div [] [
     a Path.Admin.manage [] [Text "Back to list"]
   ]
@@ -255,15 +256,69 @@ let details (album : Db.AlbumDetails) = [
   h2 album.Title
   p [] [img ["src", album.Albumarturl]]
   div ["id", "album-details"] [
-    for (caption,t) in [ "Genre: ", album.Genre
+     for (caption,t) in [ "Genre: ", album.Genre
                          "Artist: ", album.Artist
                          "Price: ", album.Price.ToString("0.##") ] ->
        p [] [
          em caption
          Text t
        ]
+       yield p ["class", "button"] [
+        a (sprintf Path.Cart.addAlbum album.Albumid) [] [Text "Add to cart"]
+       ]
   ]
 ]
+
+let emptyCart = [
+  h2 "Your cart is empty"
+  Text "Find some great music in our "
+  a Path.home [] [Text "store"]
+  Text "!"
+]
+
+let nonEmptyCart (carts : Db.CartDetails list) = [
+  h2 "Review your cart:"
+  div ["id", "update-message"] [Text " "]
+  table [
+    yield tr [
+      for h in ["Album Name"; "Price (each)"; "Quantity"; ""] ->
+        th [Text h]
+    ]
+    for cart in carts ->
+      tr [
+        td [
+          a (sprintf Path.Store.details cart.Albumid)
+          []
+          [Text cart.Albumtitle]
+        ]
+        td [
+          Text (formatDec cart.Price)
+        ]
+        td [
+          Text (cart.Count.ToString())
+        ]
+        td [
+          a "#"
+            ["class", "removeFromCart";
+             "data-id", cart.Albumid.ToString()]
+            [Text "Remove from cart"]
+        ]
+      ]
+    yield tr [
+      let total =
+        carts
+        |> List.sumBy (fun c -> c.Price * (decimal c.Count))
+      for d in ["Total"; ""; ""; formatDec total] ->
+        td [Text d]
+    ]
+  ]
+  script ["type", "text/javascript"; "src", "https://code.jquery.com/jquery-3.3.1.min.js"] []
+  script ["type", "text/javascript"; "src", "/script.js"] []
+]
+
+let cart = function
+  | [] -> emptyCart
+  | list -> nonEmptyCart list
 
 // Generic Views
 let notFound = [
